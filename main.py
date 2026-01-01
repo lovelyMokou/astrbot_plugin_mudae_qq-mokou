@@ -265,6 +265,15 @@ class CCB_Plugin(Star):
         config = await self.get_group_cfg(gid)
         cooldown = config.get("claim_cooldown", self.claim_cooldown_default)
         now_ts = time.time()
+        
+
+        draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
+        if not draw_msg:
+            return
+        ts = draw_msg.get("ts", 0)
+        if ts and (now_ts - ts > DRAW_MSG_TTL):
+            await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
+            return
         last_claim_ts = await self.get_kv_data(f"{gid}:{user_id}:last_claim", 0)
         if (now_ts - last_claim_ts) < cooldown:
             wait_sec = int(cooldown - (now_ts - last_claim_ts))
@@ -274,15 +283,9 @@ class CCB_Plugin(Star):
                 Comp.Plain(f"结婚冷却中，剩余{wait_min}分钟。")
             ])
             return
-
-        draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
-        if not draw_msg:
-            return
-        ts = draw_msg.get("ts", 0)
-        if ts and (now_ts - ts > DRAW_MSG_TTL):
-            await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
-            return
         await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
+        
+        
         char_id = draw_msg.get("char_id")
         char = self.char_manager.get_character_by_id(char_id)
         if not char:
