@@ -11,7 +11,7 @@ class CharacterManager:
         self._id_index: dict[int, dict] | None = None
 
     def load_characters(self) -> list[dict]:
-        """Load character pool from disk once."""
+        """Load pre-sorted character pool from file once."""
         if self._characters is None:
             data_path = Path(__file__).resolve().parent / "characters.json"
             try:
@@ -30,7 +30,7 @@ class CharacterManager:
         return self._characters
 
     def get_random_character(self, limit=None):
-        """Return a random character dict, or None if pool empty. The character list is guaranteed to be sorted."""
+        """Return a random character dict, or None if pool empty."""
         chars = self.load_characters()
         if not chars:
             return None

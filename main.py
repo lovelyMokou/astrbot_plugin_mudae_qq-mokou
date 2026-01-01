@@ -1,6 +1,3 @@
-from typing import Any
-
-
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from astrbot.api.star import Context, Star, register
@@ -103,130 +100,20 @@ class MyPlugin(Star):
                     return
                 exchange_req = await self.get_kv_data(f"{gid}:exchange_req:{msg_id}", None)
                 if exchange_req:
-                    ts = float(exchange_req.get("ts", 0) or 0)
-                    idx_key = f"{gid}:exchange_req_index"
-                    idx = await self.get_kv_data(idx_key, [])
-                    if not isinstance(idx, list):
-                        idx = []
-                    if ts and (now_ts - ts > DRAW_MSG_TTL):
-                        await self.delete_kv_data(f"{gid}:exchange_req:{msg_id}")
-                        new_idx = [item for item in idx if not (isinstance(item, dict) and item.get("id") == msg_id)]
-                        if len(new_idx) != len(idx):
-                            await self.put_kv_data(idx_key, new_idx)
-                        return
                     if str(emoji_user) != str(exchange_req.get("to_uid")):
                         return
                     await self.delete_kv_data(f"{gid}:exchange_req:{msg_id}")
+                    ts = float(exchange_req.get("ts", 0) or 0)
+                    idx_key = f"{gid}:exchange_req_index"
+                    idx = await self.get_kv_data(idx_key, [])
                     new_idx = [item for item in idx if not (isinstance(item, dict) and item.get("id") == msg_id)]
                     if len(new_idx) != len(idx):
                         await self.put_kv_data(idx_key, new_idx)
+                    if ts and (now_ts - ts > DRAW_MSG_TTL):
+                        return
                     async for res in self.process_swap(event, exchange_req, msg_id):
                         yield res
                     return
-
-    async def start_toggle_vote(self, event: AstrMessageEvent):
-        """发起功能开关投票，记录消息ID以供表情统计。"""
-        gid = event.get_group_id() or "global"
-        current_state = await self.get_kv_data(f"{gid}:global_toggle", {"enabled": True})
-        current_enabled = bool(current_state.get("enabled", True))
-        target_action = "关闭" if current_enabled else "开启"
-        threshold_text = "一半人同意" if current_enabled else "三分之二人同意"
-
-        msg_prefix = (
-            f"当前状态：{'已开启' if current_enabled else '已关闭'}。\n"
-            f"这样吧我发起一个投票，{threshold_text}就把功能{target_action}。\n"
-            "同意的贴"
-        )
-        cq_message = [
-            {"type": "text", "data": {"text": msg_prefix}},
-            {"type": "face", "data": {"id": 76}},
-            {"type": "text", "data": {"text": "，不同意的贴"}},
-            {"type": "face", "data": {"id": 77}},
-            {"type": "text", "data": {"text": "。"}},
-        ]
-
-        try:
-            resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
-            msg_id = resp.get("message_id") if isinstance(resp, dict) else None
-            logger.info({"stage": "toggle_vote_send", "msg_id": msg_id, "resp": resp})
-            # 放两个示例表情（不计票）方便操作，后续计算时各减 1
-            if msg_id is not None:
-                try:
-                    await event.bot.api.call_action("set_msg_emoji_like", message_id=msg_id, emoji_id=76, set=True)
-                    await event.bot.api.call_action("set_msg_emoji_like", message_id=msg_id, emoji_id=77, set=True)
-                except Exception as e:
-                    logger.error({"stage": "seed_vote_emoji_error", "error": repr(e), "msg_id": msg_id})
-
-            await asyncio.sleep(120)
-            yes = await self.fetch_emoji_count(event.bot, msg_id, "76", "1") if msg_id is not None else 0
-            no = await self.fetch_emoji_count(event.bot, msg_id, "77", "1") if msg_id is not None else 0
-            yes = max(0, yes - 1)
-            no = max(0, no - 1)
-            total = yes + no
-
-            if total == 0:
-                result_text = "投票未通过：无人在意。"
-            else:
-                if current_enabled:
-                    passed = yes * 2 >= total  # 50% 同意即可关闭
-                    need_text = "需50%同意"
-                else:
-                    passed = yes * 3 >= 2 * total  # >=2/3 同意开启
-                    need_text = "需2/3同意"
-
-                if passed:
-                    new_enabled = not current_enabled
-                    await self.put_kv_data(f"{gid}:global_toggle", {"enabled": new_enabled, "ts": time.time()})
-                    result_text = f"投票通过：同意{yes}，反对{no}。功能已{target_action}。"
-                else:
-                    result_text = f"投票未通过：同意{yes}，反对{no}，{need_text}。功能保持{'开启' if current_enabled else '关闭'}。"
-            try:
-                await event.bot.api.call_action(
-                    "send_group_msg",
-                    group_id=gid if gid != "global" else None,
-                    message=[{"type": "text", "data": {"text": result_text}}],
-                )
-            except Exception as e:
-                logger.error({"stage": "toggle_vote_result_send_error", "error": repr(e), "msg": result_text})
-        except Exception as e:
-            logger.error({"stage": "toggle_vote_send_error", "error": repr(e)})
-            yield event.plain_result("投票发起失败，请稍后再试。")
-
-    async def fetch_emoji_count(self, bot, message_id, emoji_id, emoji_type="1") -> int:
-        """调用 fetch_emoji_like 获取表情数量，兼容多种返回结构。"""
-        try:
-            resp = await bot.api.call_action(
-                "fetch_emoji_like",
-                message_id=message_id,
-                emojiId=str(emoji_id),
-                emojiType=str(emoji_type),
-            )
-            logger.info({"stage": "fetch_emoji_like_resp", "emoji_id": emoji_id, "message_id": message_id, "resp": resp})
-        except Exception as e:
-            logger.error({"stage": "fetch_emoji_like_error", "emoji_id": emoji_id, "error": repr(e)})
-            return 0
-
-        likes = []
-        try:
-            likes = resp["data"]["emojiLikesList"]
-        except Exception:
-            try:
-                likes = resp["emojiLikesList"]
-            except Exception:
-                likes = []
-
-        bot_id = None
-        try:
-            bot_id = str(bot.context.self_id)
-        except Exception:
-            pass
-
-        try:
-            if bot_id:
-                likes = [x for x in likes if str(x.get("tinyId")) != bot_id]
-            return len(likes)
-        except Exception:
-            return 0
 
     @filter.command("菜单", alias={"帮助"})
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -316,12 +203,12 @@ class MyPlugin(Star):
                 married_to = claimed_by
 
         cq_message = [{"type": "text", "data": {"text": f"{name}"}}]
-        if image_url:
-            cq_message.append({"type": "image", "data": {"file": image_url}})
         if married_to:
-            cq_message.append({"type": "text", "data": {"text": "❤已与"}})
+            cq_message.append({"type": "text", "data": {"text": "\u200b\n❤已与"}})
             cq_message.append({"type": "at", "data": {"qq": married_to}})
             cq_message.append({"type": "text", "data": {"text": "结婚，勿扰❤"}})
+        if image_url:
+            cq_message.append({"type": "image", "data": {"file": image_url}})
         if remaining == limit-1 and not married_to:
             cq_message.append({"type": "text", "data": {"text": "💡回复任意表情和TA结婚"}})
         if remaining <= 0:
