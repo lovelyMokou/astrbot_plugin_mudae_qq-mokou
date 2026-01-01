@@ -29,7 +29,9 @@ class MyPlugin(Star):
 
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
-        self.char_manager.load_characters()
+        chars = self.char_manager.load_characters()
+        if not chars:
+            raise RuntimeError("无法加载角色数据：characters.json 缺失或格式错误")
 
     async def get_group_cfg(self, gid):
         if gid not in self.group_cfgs:
@@ -487,7 +489,6 @@ class MyPlugin(Star):
             Comp.Plain(f"已与 {cname or cid} 离婚。"),
         ])
 
-
     @filter.command("交换")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_exchange(self, event: AstrMessageEvent, my_cid: str | int | None = None, other_cid: str | int | None = None):
@@ -751,16 +752,14 @@ class MyPlugin(Star):
         marrried_to = await self.get_kv_data(f"{gid}:{cid}:married_to", None)
         await self.delete_kv_data(f"{gid}:{cid}:married_to")
 
-        user_list = await self.get_user_list(gid)
-        for uid in user_list:
-            partners_key = f"{gid}:{uid}:partners"
-            marry_list = await self.get_kv_data(partners_key, [])
-            if str(cid) in marry_list:
-                marry_list = [m for m in marry_list if m != str(cid)]
-                await self.put_kv_data(partners_key, marry_list)
-                fav = await self.get_kv_data(f"{gid}:{marrried_to}:fav", None)
-                if fav and str(fav) == str(cid):
-                    await self.delete_kv_data(f"{gid}:{marrried_to}:fav")
+        partners_key = f"{gid}:{marrried_to}:partners"
+        marry_list = await self.get_kv_data(partners_key, [])
+        if str(cid) in marry_list:
+            marry_list = [m for m in marry_list if m != str(cid)]
+            await self.put_kv_data(partners_key, marry_list)
+            fav = await self.get_kv_data(f"{gid}:{marrried_to}:fav", None)
+            if fav and str(fav) == str(cid):
+                await self.delete_kv_data(f"{gid}:{marrried_to}:fav")
 
         cname = (self.char_manager.get_character_by_id(cid) or {}).get("name") or cid
         yield event.plain_result(f"{cname} 已被强制解除婚约。")

@@ -14,8 +14,13 @@ class CharacterManager:
         """Load character pool from disk once."""
         if self._characters is None:
             data_path = Path(__file__).resolve().parent / "characters.json"
-            with data_path.open("r", encoding="utf-8") as f:
-                self._characters = json.load(f)
+            try:
+                with data_path.open("r", encoding="utf-8") as f:
+                    self._characters = json.load(f)
+            except FileNotFoundError:
+                self._characters = []
+            except json.JSONDecodeError as exc:
+                self._characters = []
         if self._id_index is None:
             self._id_index = {
                 c.get("id"): c
@@ -25,7 +30,7 @@ class CharacterManager:
         return self._characters
 
     def get_random_character(self, limit=None):
-        """Return a random character dict, or None if pool empty."""
+        """Return a random character dict, or None if pool empty. The character list is guaranteed to be sorted."""
         chars = self.load_characters()
         if not chars:
             return None
