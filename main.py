@@ -11,8 +11,7 @@ import random
 DRAW_MSG_TTL = 45  # seconds to keep draw message records
 DRAW_MSG_INDEX_MAX = 300  # max tracked message ids to avoid unbounded growth
 
-@register("二次元笑传之抽抽Bot", "kennylimz", "二次元抽卡插件", "1.0")
-class MyPlugin(Star):
+class CCB_Plugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.char_manager = CharacterManager()
@@ -71,13 +70,18 @@ class MyPlugin(Star):
             user_set.add(uid)
             await self.put_user_list(gid, user_set)
 
-        try:
-            post_type = event.message_obj.raw_message.post_type
-        except AttributeError:
-            post_type = None
+        raw = getattr(event, "message_obj", None)
+        raw_body = getattr(raw, "raw_message", None)
+        if isinstance(raw_body, dict):
+            post_type = raw_body.get("post_type")
+        else:
+            post_type = getattr(raw_body, "post_type", None)
 
         if post_type == "notice":
-            notice_type = getattr(event.message_obj.raw_message, "notice_type", None)
+            if isinstance(raw_body, dict):
+                notice_type = raw_body.get("notice_type")
+            else:
+                notice_type = getattr(raw_body, "notice_type", None)
             if notice_type == "group_msg_emoji_like":
                 async for result in self.handle_emoji_like_notice(event):
                     yield result
@@ -85,9 +89,11 @@ class MyPlugin(Star):
 
     async def handle_emoji_like_notice(self, event: AstrMessageEvent):
         '''用户回应抽卡结果和交换请求的处理器'''
-        notice_type = event.message_obj.raw_message.notice_type
+        raw = getattr(event, "message_obj", None)
+        raw_body = getattr(raw, "raw_message", None)
+        notice_type = raw_body.get("notice_type") if isinstance(raw_body, dict) else getattr(raw_body, "notice_type", None)
         emoji_user = event.get_sender_id()
-        msg_id = event.message_obj.raw_message.message_id
+        msg_id = raw_body.get("message_id") if isinstance(raw_body, dict) else getattr(raw_body, "message_id", None)
         now_ts = time.time()
         gid = event.get_group_id() or "global"
 
@@ -215,6 +221,7 @@ class MyPlugin(Star):
             cq_message.append({"type": "text", "data": {"text": "⚠本小时已达上限⚠"}})
 
         try:
+            # 使用API获取消息ID
             resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
             msg_id = resp.get("message_id") if isinstance(resp, dict) else None
             if msg_id is not None and not married_to:
