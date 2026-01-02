@@ -196,10 +196,8 @@ class CCB_Plugin(Star):
             count += 1
 
         remaining = limit - count
-        wish_list_key = f"{gid}:{user_id}:wish_list"
-        wish_list = await self.get_kv_data(wish_list_key, [])
-        random_val = random.random()
-        if random_val < 0.001 and wish_list:
+        wish_list = await self.get_kv_data(f"{gid}:{user_id}:wish_list", [])
+        if random.random() < 0.001 and wish_list:
             char_id = random.choice(wish_list)
             character = self.char_manager.get_character_by_id(char_id)
         else:
