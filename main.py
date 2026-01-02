@@ -3,7 +3,6 @@ from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 import astrbot.api.message_components as Comp
-import asyncio
 import time
 from .util.character_manager import CharacterManager
 import random
@@ -57,7 +56,7 @@ class CCB_Plugin(Star):
 
     @filter.platform_adapter_type(PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def handle_notice(self, event: AstrMessageEvent):
+    async def handle_group_notice(self, event: AstrMessageEvent):
         '''用户回应抽卡结果和交换请求的处理器'''
         gid = event.get_group_id()
         if not gid:
@@ -135,6 +134,9 @@ class CCB_Plugin(Star):
             "搜索 <角色名称>",
             "我的后宫",
             "交换 <我的角色ID> <对方角色ID>",
+            "许愿 <角色ID>",
+            "愿望单",
+            "删除许愿 <角色ID>",
             "================================",
             "管理员指令：",
             "系统设置 <功能> <参数>",
@@ -194,7 +196,14 @@ class CCB_Plugin(Star):
             count += 1
 
         remaining = limit - count
-        character = self.char_manager.get_random_character(limit=config.get('draw_scope', None))
+        wish_list_key = f"{gid}:{user_id}:wish_list"
+        wish_list = await self.get_kv_data(wish_list_key, [])
+        random_val = random.random()
+        if random_val < 0.001 and wish_list:
+            char_id = random.choice(wish_list)
+            character = self.char_manager.get_character_by_id(char_id)
+        else:
+            character = self.char_manager.get_random_character(limit=config.get('draw_scope', None))
         if not character:
             yield event.plain_result("卡池数据未加载")
             return
@@ -207,14 +216,23 @@ class CCB_Plugin(Star):
             claimed_by = await self.get_kv_data(f"{gid}:{char_id}:married_to", None)
             if claimed_by:
                 married_to = claimed_by
-
-        cq_message = [{"type": "text", "data": {"text": f"{name}"}}]
+        wished_by_key = f"{gid}:{char_id}:wished_by"
+        wished_by = await self.get_kv_data(wished_by_key, [])
+        
+        cq_message = []
+        if not married_to and wished_by:
+            for wisher in wished_by:
+                cq_message.append({"type": "at", "data": {"qq": wisher}})
+            cq_message.append({"type": "text", "data": {"text": f"已许愿\n{name}"}})
+        else:
+            cq_message.append({"type": "text", "data": {"text": f"{name}"}})
         if married_to:
             cq_message.append({"type": "text", "data": {"text": "\u200b\n❤已与"}})
             cq_message.append({"type": "at", "data": {"qq": married_to}})
             cq_message.append({"type": "text", "data": {"text": "结婚，勿扰❤"}})
         if image_url:
             cq_message.append({"type": "image", "data": {"file": image_url}})
+        
         if remaining == limit-1 and not married_to:
             cq_message.append({"type": "text", "data": {"text": "💡回复任意表情和TA结婚"}})
         if remaining <= 0:
@@ -268,11 +286,15 @@ class CCB_Plugin(Star):
         
 
         draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
+        await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
         if not draw_msg:
             return
         ts = draw_msg.get("ts", 0)
         if ts and (now_ts - ts > DRAW_MSG_TTL):
-            await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
+            return
+        char_id = draw_msg.get("char_id")
+        claimed_by = await self.get_kv_data(f"{gid}:{char_id}:married_to", None)
+        if claimed_by:
             return
         last_claim_ts = await self.get_kv_data(f"{gid}:{user_id}:last_claim", 0)
         if (now_ts - last_claim_ts) < cooldown:
@@ -282,9 +304,8 @@ class CCB_Plugin(Star):
                 Comp.At(qq=str(user_id)),
                 Comp.Plain(f"结婚冷却中，剩余{wait_min}分钟。")
             ])
+            await self.put_kv_data(f"{gid}:draw_msg:{msg_id}", draw_msg)
             return
-        await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
-        
         
         char_id = draw_msg.get("char_id")
         char = self.char_manager.get_character_by_id(char_id)
@@ -343,9 +364,9 @@ class CCB_Plugin(Star):
             if fav and str(fav) == str(cid):
                 fav_mark = "⭐"
             lines.append(f"{fav_mark}{char.get('name')} (ID: {cid})")
-        lines.insert(0, f"\u200b\n阵容总人气: {total_heat}")
+        lines.insert(0, f"阵容总人气: {total_heat}")
         chain = [
-            Comp.At(qq=event.get_sender_id()),
+            Comp.Reply(id=event.message_obj.message_id),
             Comp.Plain("\n".join(lines))
         ]
         yield event.chain_result(chain)
@@ -563,6 +584,101 @@ class CCB_Plugin(Star):
             msg_chain.insert(0, Comp.Reply(id=str(cmd_msg_id)))
         yield event.chain_result(msg_chain)
 
+    @filter.command("许愿")
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_wish(self, event: AstrMessageEvent, cid: str | int | None = None):
+        '''许愿指定角色'''
+        gid = event.get_group_id() or "global"
+        user_id = str(event.get_sender_id())
+        config = await self.get_group_cfg(gid)
+        if cid is None or not str(cid).strip().isdigit():
+            yield event.plain_result("用法：许愿 <角色ID>")
+            return
+        cid = str(cid).strip()
+        char = self.char_manager.get_character_by_id(cid)
+        if not char:
+            yield event.plain_result(f"未找到ID为 {cid} 的角色")
+            return
+        wish_list_key = f"{gid}:{user_id}:wish_list"
+        wish_list = await self.get_kv_data(wish_list_key, [])
+        if len(wish_list) >= config.get("harem_max_size", self.harem_max_size_default):
+            yield event.chain_result([
+                Comp.Reply(id=str(event.message_obj.message_id)),
+                Comp.Plain(f"愿望单已满"),
+            ])
+            return
+        if cid not in wish_list:
+            wish_list.append(cid)
+            await self.put_kv_data(wish_list_key, wish_list)
+        wished_by_key = f"{gid}:{cid}:wished_by"
+        wished_by = await self.get_kv_data(wished_by_key, [])
+        if user_id not in wished_by:
+            wished_by.append(user_id)
+            await self.put_kv_data(wished_by_key, wished_by)
+        yield event.chain_result([
+            Comp.Reply(id=str(event.message_obj.message_id)),
+            Comp.Plain(f"已许愿 {char.get('name')}"),
+        ])
+
+    @filter.command("愿望单")
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_wish_list(self, event: AstrMessageEvent):
+        '''查看愿望单'''
+        gid = event.get_group_id() or "global"
+        user_id = str(event.get_sender_id())
+        wish_list_key = f"{gid}:{user_id}:wish_list"
+        wish_list = await self.get_kv_data(wish_list_key, [])
+        if not wish_list:
+            yield event.chain_result([
+                Comp.Reply(id=str(event.message_obj.message_id)),
+                Comp.At(qq=user_id),
+                Comp.Plain("你的愿望单为空"),
+            ])
+            return
+        lines = []
+        for cid in wish_list:
+            married_to = await self.get_kv_data(f"{gid}:{cid}:married_to", None)
+            char = self.char_manager.get_character_by_id(cid)
+            if char is None:
+                continue
+            line = f"{char.get('name')}(ID: {cid})"
+            if married_to:
+                if str(married_to) == user_id:
+                    line += "❤️"
+                else:
+                    line += "💔"
+            lines.append(line)
+        yield event.chain_result([
+            Comp.Reply(id=str(event.message_obj.message_id)),
+            Comp.Plain("\n".join(lines)),
+        ])
+
+    @filter.command("删除许愿")
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def handle_wish_clear(self, event: AstrMessageEvent, cid: str | int | None = None):
+        '''从愿望单中删除指定角色'''
+        gid = event.get_group_id() or "global"
+        user_id = str(event.get_sender_id())
+        if cid is None or not str(cid).strip().isdigit():
+            yield event.plain_result("用法：删除许愿 <角色ID>")
+            return
+        cid = str(cid).strip()
+        wish_list_key = f"{gid}:{user_id}:wish_list"
+        wish_list = await self.get_kv_data(wish_list_key, [])
+        wish_list = [x for x in wish_list if str(x) != cid]
+        await self.put_kv_data(wish_list_key, wish_list)
+        wished_by_key = f"{gid}:{cid}:wished_by"
+        wished_by = await self.get_kv_data(wished_by_key, [])
+        wished_by = [uid for uid in wished_by if str(uid) != user_id]
+        if wished_by:
+            await self.put_kv_data(wished_by_key, wished_by)
+        else:
+            await self.delete_kv_data(wished_by_key)
+        yield event.chain_result([
+            Comp.Reply(id=str(event.message_obj.message_id)),
+            Comp.Plain(f"已从愿望单移除"),
+        ])
+
     @filter.command("查询")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_query(self, event: AstrMessageEvent, cid: str | int | None = None):
@@ -646,17 +762,19 @@ class CCB_Plugin(Star):
             yield event.plain_result("用法：强制离婚 <角色ID>")
             return
         cid = int(str(cid).strip())
-        marrried_to = await self.get_kv_data(f"{gid}:{cid}:married_to", None)
         await self.delete_kv_data(f"{gid}:{cid}:married_to")
 
-        partners_key = f"{gid}:{marrried_to}:partners"
-        marry_list = await self.get_kv_data(partners_key, [])
-        if str(cid) in marry_list:
-            marry_list = [m for m in marry_list if m != str(cid)]
-            await self.put_kv_data(partners_key, marry_list)
-            fav = await self.get_kv_data(f"{gid}:{marrried_to}:fav", None)
-            if fav and str(fav) == str(cid):
-                await self.delete_kv_data(f"{gid}:{marrried_to}:fav")
+        # 遍历所有用户检查坏数据
+        users = await self.get_kv_data(f"{gid}:user_list", [])
+        for uid in users:
+            partners_key = f"{gid}:{uid}:partners"
+            marry_list = await self.get_kv_data(partners_key, [])
+            if str(cid) in marry_list:
+                marry_list = [m for m in marry_list if m != str(cid)]
+                await self.put_kv_data(partners_key, marry_list)
+                fav = await self.get_kv_data(f"{gid}:{uid}:fav", None)
+                if fav and str(fav) == str(cid):
+                    await self.delete_kv_data(f"{gid}:{uid}:fav")
 
         cname = (self.char_manager.get_character_by_id(cid) or {}).get("name") or cid
         yield event.plain_result(f"{cname} 已被强制解除婚约。")
@@ -799,9 +917,6 @@ class CCB_Plugin(Star):
         group_role = await self.get_group_role(event)
         if group_role not in ['owner'] and str(event.get_sender_id()) not in self.super_admins:
             yield event.plain_result("无权限执行此命令。")
-            return
-        if confirm is None:
-            yield event.plain_result("用法：终极轮回")
             return
         if str(confirm) != "确认":
             yield event.plain_result("确定要进行终极轮回吗？此操作将清除本群所有角色婚姻信息（除了最爱角色）。\n如果确定要执行，请使用“终极轮回 确认”")
