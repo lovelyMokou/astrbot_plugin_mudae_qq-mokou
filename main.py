@@ -79,50 +79,41 @@ class CCB_Plugin(Star):
             await self.put_user_list(gid, user_set)
 
         # 检查是否为notice事件：event.message_obj.raw_message.post_type == "notice"
-        raw = getattr(event, "message_obj", None)
-        raw_body = getattr(raw, "raw_message", None)
-        post_type = getattr(raw_body, "post_type", None)
-        if post_type == "notice":
+        if event.message_obj.raw_message.post_type == "notice":
             # 检查是否为emoji事件：event.message_obj.raw_message.notice_type == "group_msg_emoji_like"
-            notice_type = getattr(raw_body, "notice_type", None)
-            if notice_type == "group_msg_emoji_like":
+            if event.message_obj.raw_message.notice_type == "group_msg_emoji_like":
                 # stop further pipeline (including default LLM) for notice events
                 async for result in self.handle_emoji_like_notice(event):
                     yield result
 
     async def handle_emoji_like_notice(self, event: AstrMessageEvent):
         '''用户回应抽卡结果和交换请求的处理器'''
-        raw = getattr(event, "message_obj", None)
-        raw_body = getattr(raw, "raw_message", None)
-        notice_type = getattr(raw_body, "notice_type", None)
         emoji_user = event.get_sender_id()
-        msg_id = getattr(raw_body, "message_id", None)
+        msg_id = event.message_obj.raw_message.message_id
         now_ts = time.time()
         gid = event.get_group_id() or "global"
-
-        if notice_type == "group_msg_emoji_like" and emoji_user:
-            if msg_id:
-                draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
-                if draw_msg:
-                    async for res in self.handle_claim(event):
-                        yield res
-                    return
-                exchange_req = await self.get_kv_data(f"{gid}:exchange_req:{msg_id}", None)
-                if exchange_req:
-                    if str(emoji_user) != str(exchange_req.get("to_uid")):
-                        return
-                    await self.delete_kv_data(f"{gid}:exchange_req:{msg_id}")
-                    ts = float(exchange_req.get("ts", 0) or 0)
-                    idx_key = f"{gid}:exchange_req_index"
-                    idx = await self.get_kv_data(idx_key, [])
-                    new_idx = [item for item in idx if not (isinstance(item, dict) and item.get("id") == msg_id)]
-                    if len(new_idx) != len(idx):
-                        await self.put_kv_data(idx_key, new_idx)
-                    if ts and (now_ts - ts > DRAW_MSG_TTL):
-                        return
-                    async for res in self.process_swap(event, exchange_req, msg_id):
-                        yield res
-                    return
+        
+        draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
+        if draw_msg:
+            async for res in self.handle_claim(event):
+                yield res
+            return
+        exchange_req = await self.get_kv_data(f"{gid}:exchange_req:{msg_id}", None)
+        if exchange_req:
+            if str(emoji_user) != str(exchange_req.get("to_uid")):
+                return
+            await self.delete_kv_data(f"{gid}:exchange_req:{msg_id}")
+            ts = float(exchange_req.get("ts", 0) or 0)
+            idx_key = f"{gid}:exchange_req_index"
+            idx = await self.get_kv_data(idx_key, [])
+            new_idx = [item for item in idx if not (isinstance(item, dict) and item.get("id") == msg_id)]
+            if len(new_idx) != len(idx):
+                await self.put_kv_data(idx_key, new_idx)
+            if ts and (now_ts - ts > DRAW_MSG_TTL):
+                return
+            async for res in self.process_swap(event, exchange_req, msg_id):
+                yield res
+            return
 
     @filter.command("菜单", alias={"帮助"})
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
