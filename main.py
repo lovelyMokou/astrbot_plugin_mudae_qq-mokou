@@ -81,17 +81,10 @@ class CCB_Plugin(Star):
         # 检查是否为notice事件：event.message_obj.raw_message.post_type == "notice"
         raw = getattr(event, "message_obj", None)
         raw_body = getattr(raw, "raw_message", None)
-        if isinstance(raw_body, dict):
-            post_type = raw_body.get("post_type")
-        else:
-            post_type = getattr(raw_body, "post_type", None)
-
-        # 检查是否为emoji事件：event.message_obj.raw_message.notice_type == "group_msg_emoji_like"
+        post_type = getattr(raw_body, "post_type", None)
         if post_type == "notice":
-            if isinstance(raw_body, dict):
-                notice_type = raw_body.get("notice_type")
-            else:
-                notice_type = getattr(raw_body, "notice_type", None)
+            # 检查是否为emoji事件：event.message_obj.raw_message.notice_type == "group_msg_emoji_like"
+            notice_type = getattr(raw_body, "notice_type", None)
             if notice_type == "group_msg_emoji_like":
                 # stop further pipeline (including default LLM) for notice events
                 async for result in self.handle_emoji_like_notice(event):
