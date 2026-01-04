@@ -218,7 +218,7 @@ class CCB_Plugin(Star):
             if not married_to and wished_by:
                 for wisher in wished_by:
                     cq_message.append({"type": "at", "data": {"qq": wisher}})
-                cq_message.append({"type": "text", "data": {"text": f"已许愿\n{name}"}})
+                cq_message.append({"type": "text", "data": {"text": f" 已许愿\n{name}"}})
             else:
                 cq_message.append({"type": "text", "data": {"text": f"{name}"}})
             if married_to:
