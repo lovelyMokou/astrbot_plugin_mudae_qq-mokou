@@ -95,11 +95,13 @@ class CCB_Plugin(Star):
         
         draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
         if draw_msg:
+            event.call_llm = True
             async for res in self.handle_claim(event):
                 yield res
             return
         exchange_req = await self.get_kv_data(f"{gid}:exchange_req:{msg_id}", None)
         if exchange_req:
+            event.call_llm = True
             if str(emoji_user) != str(exchange_req.get("to_uid")):
                 return
             await self.delete_kv_data(f"{gid}:exchange_req:{msg_id}")
@@ -119,6 +121,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_help_menu(self, event: AstrMessageEvent):
         '''显示帮助菜单'''
+        event.call_llm = True
         menu_lines = [
             "普通指令：",
             "菜单/帮助",
@@ -150,6 +153,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_draw(self, event: AstrMessageEvent):
         '''抽卡！给结果贴表情来收集'''
+        event.call_llm = True
         user_id = event.get_sender_id()
         gid = event.get_group_id() or "global"
         lock = self._get_group_lock(gid)
@@ -164,9 +168,9 @@ class CCB_Plugin(Star):
             user_set = await self.get_user_list(gid)
             cooldown = config.get("draw_cooldown", 0)
 
-            cooldown = max(cooldown, int(len(user_set)/10))
+            cooldown = max(cooldown, 2)
             if cooldown > 0:
-                last_draw_ts = await self.get_kv_data(f"{gid}:{user_id}:last_draw", 0)
+                last_draw_ts = await self.get_kv_data(f"{gid}:last_draw", 0)
                 if (now_ts - last_draw_ts) < cooldown:
                     # wait_sec = int(cooldown - (now_ts - last_draw_ts))
                     # yield event.chain_result([
@@ -174,7 +178,7 @@ class CCB_Plugin(Star):
                     #     Comp.Plain(f"抽卡冷却中，剩余{wait_sec}秒。")
                     # ])
                     return
-                await self.put_kv_data(f"{gid}:{user_id}:last_draw", now_ts)
+                await self.put_kv_data(f"{gid}:last_draw", now_ts)
 
             if record_bucket != bucket:
                 count = 1
@@ -271,6 +275,7 @@ class CCB_Plugin(Star):
 
     async def handle_claim(self, event: AstrMessageEvent):
         '''结婚逻辑，给结果贴表情来收集。'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         user_id = event.get_sender_id()
         msg_id = event.message_obj.raw_message.message_id
@@ -340,6 +345,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_harem(self, event: AstrMessageEvent):
         '''显示收集的人物列表'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         uid = str(event.get_sender_id())
         marry_list_key = f"{gid}:{uid}:partners"
@@ -371,6 +377,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_divorce(self, event: AstrMessageEvent, cid: str | int | None = None):
         '''移除自己与指定角色的婚姻'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         user_id = event.get_sender_id()
         if cid is None or not str(cid).strip().isdigit():
@@ -409,6 +416,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_exchange(self, event: AstrMessageEvent, my_cid: str | int | None = None, other_cid: str | int | None = None):
         '''向其他用户发起交换请求'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         user_id = event.get_sender_id()
         user_set = await self.get_user_list(gid)
@@ -486,6 +494,7 @@ class CCB_Plugin(Star):
             return
 
     async def process_swap(self, event: AstrMessageEvent, req: dict, msg_id):
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         from_uid = str(req.get("from_uid"))
         to_uid = str(req.get("to_uid"))
@@ -560,6 +569,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_favorite(self, event: AstrMessageEvent, cid: str | int | None = None):
         '''将指定角色设为最爱'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         user_id = str(event.get_sender_id())
         if cid is None or not str(cid).strip().isdigit():
@@ -588,6 +598,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_wish(self, event: AstrMessageEvent, cid: str | int | None = None):
         '''许愿指定角色，稍稍增加概率'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         user_id = str(event.get_sender_id())
         config = await self.get_group_cfg(gid)
@@ -624,6 +635,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_wish_list(self, event: AstrMessageEvent):
         '''查看愿望单'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         user_id = str(event.get_sender_id())
         wish_list_key = f"{gid}:{user_id}:wish_list"
@@ -657,6 +669,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_wish_clear(self, event: AstrMessageEvent, cid: str | int | None = None):
         '''从愿望单中删除指定角色'''
+        event.call_llm = True
         gid = event.get_group_id() or "global"
         user_id = str(event.get_sender_id())
         if cid is None or not str(cid).strip().isdigit():
@@ -683,6 +696,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_query(self, event: AstrMessageEvent, cid: str | int | None = None):
         '''查询指定角色的信息'''
+        event.call_llm = True
         if cid is None:
             yield event.plain_result("用法：查询 <角色ID>")
             return
@@ -704,6 +718,7 @@ class CCB_Plugin(Star):
 
     async def print_character_info(self, event: AstrMessageEvent, char: dict):
         '''打印角色信息'''
+        event.call_llm = True
         name = char.get("name", "")
         gender = char.get("gender")
         gender_mark = "❓"
@@ -729,6 +744,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_search(self, event: AstrMessageEvent, keyword: str | None = None):
         '''搜索角色'''
+        event.call_llm = True
         if not keyword:
             yield event.plain_result("用法：搜索 <角色名字/部分名字>")
             return
@@ -753,6 +769,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_force_divorce(self, event: AstrMessageEvent, cid: str | int | None = None):
         '''强制移除指定角色的婚姻，用于清除坏的数据（管理员专用）'''
+        event.call_llm = True
         group_role = await self.get_group_role(event)
         if group_role not in ['admin', 'owner'] and str(event.get_sender_id()) not in self.super_admins:
             yield event.plain_result("无权限执行此命令。")
@@ -783,6 +800,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_clear_harem(self, event: AstrMessageEvent, uid: str | None = None):
         '''清理指定用户的后宫，最爱会被保留（管理员专用）'''
+        event.call_llm = True
         group_role = await self.get_group_role(event)
         if group_role not in ['admin', 'owner'] and str(event.get_sender_id()) not in self.super_admins:
             yield event.plain_result("无权限执行此命令。")
@@ -818,6 +836,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_config(self, event: AstrMessageEvent, feature: str | None = None, value: str | None = None):
         '''系统设置（管理员专用）'''
+        event.call_llm = True
         group_role = await self.get_group_role(event)
         if group_role not in ['admin', 'owner'] and str(event.get_sender_id()) not in self.super_admins:
             yield event.plain_result("无权限执行此命令。")
@@ -895,6 +914,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_refresh(self, event: AstrMessageEvent, user_id: str | None = None):
         '''刷新指定用户的抽卡和结婚冷却（群主和超管专用）'''
+        event.call_llm = True
         group_role = await self.get_group_role(event)
         if group_role not in ['owner'] and str(event.get_sender_id()) not in self.super_admins:
             yield event.plain_result("无权限执行此命令。")
@@ -915,6 +935,7 @@ class CCB_Plugin(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_ultimate_reset(self, event: AstrMessageEvent, confirm: str | None = None):
         '''清除本群所有角色婚姻信息（除了最爱角色）（群主和超管专用）'''
+        event.call_llm = True
         group_role = await self.get_group_role(event)
         if group_role not in ['owner'] and str(event.get_sender_id()) not in self.super_admins:
             yield event.plain_result("无权限执行此命令。")

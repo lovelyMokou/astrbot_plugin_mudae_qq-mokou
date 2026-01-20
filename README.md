@@ -6,6 +6,10 @@
 
 NapCat和AstrBot的部署请参考 [https://docs.astrbot.app/deploy/platform/aiocqhttp/napcat.html](https://docs.astrbot.app/deploy/platform/aiocqhttp/napcat.html)
 
+## 参数设置
+
+请在“插件-插件配置”中浏览并编辑默认游戏参数。
+
 ## 基本指令
 
 **查看帮助**

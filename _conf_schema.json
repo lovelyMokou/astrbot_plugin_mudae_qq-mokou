@@ -14,7 +14,7 @@
       "default": 5
     },
     "claim_cooldown": {
-      "description": "默认结婚冷却时间",
+      "description": "默认结婚冷却时间(秒)",
       "type": "int",
       "hint": "冷却时间内无法收集角色",
       "obvious_hint": true,
