@@ -367,10 +367,15 @@ class CCB_Plugin(Star):
                 fav_mark = "⭐"
             lines.append(f"{fav_mark}{char.get('name')} (ID: {cid})")
         lines.insert(0, f"阵容总人气: {total_heat}")
-        chain = [
-            Comp.Reply(id=event.message_obj.message_id),
-            Comp.Plain("\n".join(lines))
-        ]
+        chain = [Comp.Reply(id=event.message_obj.message_id)]
+        if fav and str(fav) in marry_list:
+            fav_char = self.char_manager.get_character_by_id(fav)
+            if fav_char:
+                images = fav_char.get("image") or []
+                image_url = random.choice(images) if images else None
+                if image_url:
+                    chain.append(Comp.Image.fromURL(image_url))
+        chain.append(Comp.Plain("\n".join(lines)))
         yield event.chain_result(chain)
 
     @filter.command("离婚")
