@@ -27,6 +27,7 @@ NapCat和AstrBot的部署请参考 [https://docs.astrbot.app/deploy/platform/aio
 **查看后宫**
 ```
 @机器人 我的后宫
+@机器人 我的后宫 <页码>
 ```
 
 **结婚**

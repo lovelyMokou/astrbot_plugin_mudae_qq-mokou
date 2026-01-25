@@ -131,6 +131,7 @@ class CCB_Plugin(Star):
             "查询 <角色ID>",
             "搜索 <角色名称>",
             "我的后宫",
+            "我的后宫 <页码>",
             "交换 <我的角色ID> <对方角色ID>",
             "许愿 <角色ID>",
             "愿望单",
@@ -165,7 +166,6 @@ class CCB_Plugin(Star):
             now_tm = time.localtime(now_ts)
             bucket = f"{now_tm.tm_year}-{now_tm.tm_yday}-{now_tm.tm_hour}"
             record_bucket, record_count = await self.get_kv_data(key, (None, 0))
-            user_set = await self.get_user_list(gid)
             cooldown = config.get("draw_cooldown", 0)
 
             cooldown = max(cooldown, 2)
@@ -343,7 +343,7 @@ class CCB_Plugin(Star):
 
     @filter.command("我的后宫")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    async def handle_harem(self, event: AstrMessageEvent):
+    async def handle_harem(self, event: AstrMessageEvent, page: int = 0):
         '''显示收集的人物列表'''
         event.call_llm = True
         gid = event.get_group_id() or "global"
@@ -354,8 +354,10 @@ class CCB_Plugin(Star):
             yield event.plain_result("你的后宫空空如也。")
             return
         lines = []
+        per_page = 10
         fav = await self.get_kv_data(f"{gid}:{uid}:fav", None)
         total_heat = 0
+        entries = []
         for cid in marry_list:
             char = self.char_manager.get_character_by_id(cid)
             if char is None:
@@ -365,8 +367,45 @@ class CCB_Plugin(Star):
             fav_mark = ""
             if fav and str(fav) == str(cid):
                 fav_mark = "⭐"
-            lines.append(f"{fav_mark}{char.get('name')} (ID: {cid})")
-        lines.insert(0, f"阵容总人气: {total_heat}")
+            entries.append(f"{fav_mark}{char.get('name')} (ID: {cid})")
+        if page == 0:
+            sender_name = event.get_sender_name() or event.get_sender_id()
+            header_parts = [
+                Comp.Plain(f"{sender_name}的后宫\n总人气: {total_heat}")
+            ]
+            if fav and str(fav) in marry_list:
+                fav_char = self.char_manager.get_character_by_id(fav)
+                if fav_char:
+                    images = fav_char.get("image") or []
+                    image_url = random.choice(images) if images else None
+                    if image_url:
+                        header_parts.insert(0, Comp.Image.fromURL(image_url))
+            node_list = [
+                Comp.Node(
+                    uin=event.get_self_id(),
+                    name=f"{sender_name}的后宫",
+                    content=header_parts
+                ),
+                Comp.Node(
+                    uin=event.get_self_id(),
+                    name=f"{sender_name}的后宫",
+                    content=[Comp.Plain("\n".join(entries))]
+                )
+            ]
+            yield event.chain_result([
+                Comp.Nodes(node_list)
+            ])
+            return
+        total_pages = max(1, (len(entries) + per_page - 1) // per_page)
+        if page < 1:
+            page = 1
+        if page > total_pages:
+            page = total_pages
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        lines.append(f"阵容总人气: {total_heat}")
+        lines.extend(entries[start_idx:end_idx])
+        lines.append(f"(第{page}/{total_pages}页)")
         chain = [Comp.Reply(id=event.message_obj.message_id)]
         if fav and str(fav) in marry_list:
             fav_char = self.char_manager.get_character_by_id(fav)
