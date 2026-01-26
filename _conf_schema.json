@@ -25,6 +25,6 @@
       "type": "int",
       "hint": "到达后会无法收集更多角色",
       "obvious_hint": true,
-      "default": 10
+      "default": 20
     }
 }
