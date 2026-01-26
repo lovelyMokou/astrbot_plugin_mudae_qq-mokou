@@ -385,13 +385,17 @@ class CCB_Plugin(Star):
                     uin=event.get_self_id(),
                     name=f"{sender_name}的后宫",
                     content=header_parts
-                ),
-                Comp.Node(
-                    uin=event.get_self_id(),
-                    name=f"{sender_name}的后宫",
-                    content=[Comp.Plain("\n".join(entries))]
                 )
             ]
+            for idx in range(0, len(entries), per_page):
+                chunk = entries[idx:idx + per_page]
+                node_list.append(
+                    Comp.Node(
+                        uin=event.get_self_id(),
+                        name=f"{sender_name}的后宫",
+                        content=[Comp.Plain("\n".join(chunk))]
+                    )
+                )
             yield event.chain_result([
                 Comp.Nodes(node_list)
             ])
