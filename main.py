@@ -351,7 +351,11 @@ class CCB_Plugin(Star):
         marry_list_key = f"{gid}:{uid}:partners"
         marry_list = await self.get_kv_data(marry_list_key, [])
         if not marry_list:
-            yield event.plain_result("你的后宫空空如也。")
+            yield event.chain_result([
+                Comp.Reply(id=event.message_obj.message_id),
+                Comp.At(qq=uid),
+                Comp.Plain("，你的后宫空空如也。")
+            ])
             return
         lines = []
         per_page = 10
