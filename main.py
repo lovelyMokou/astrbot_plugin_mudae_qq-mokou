@@ -172,20 +172,12 @@ class CCB_Plugin(Star):
             if cooldown > 0:
                 last_draw_ts = await self.get_kv_data(f"{gid}:last_draw", 0)
                 if (now_ts - last_draw_ts) < cooldown:
-                    # wait_sec = int(cooldown - (now_ts - last_draw_ts))
-                    # yield event.chain_result([
-                    #     Comp.At(qq=user_id),
-                    #     Comp.Plain(f"抽卡冷却中，剩余{wait_sec}秒。")
-                    # ])
                     return
-                await self.put_kv_data(f"{gid}:last_draw", now_ts)
 
             if record_bucket != bucket:
-                count = 1
-                await self.put_kv_data(key, (bucket, count))
+                count = 0
             else:
                 count = record_count
-                await self.put_kv_data(key, (bucket, count + 1))
                 if count >= limit:
                     if count == limit:
                         chain = [
@@ -193,10 +185,11 @@ class CCB_Plugin(Star):
                             Comp.Plain("\u200b\n⚠本小时已达上限⚠")
                         ]
                         yield event.chain_result(chain)
+                        await self.put_kv_data(key, (bucket, count + 1))
                     return
-                count += 1
 
-            remaining = limit - count
+            next_count = count + 1
+            remaining = limit - next_count
             wish_list = await self.get_kv_data(f"{gid}:{user_id}:wish_list", [])
             if random.random() < 0.001 and wish_list:
                 char_id = random.choice(wish_list)
@@ -241,6 +234,8 @@ class CCB_Plugin(Star):
                 # 使用NapCat的API获取消息ID
                 resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
                 msg_id = resp.get("message_id") if isinstance(resp, dict) else None
+                await self.put_kv_data(key, (bucket, next_count))
+                await self.put_kv_data(f"{gid}:last_draw", now_ts)
                 if msg_id is not None and not married_to:
                     # Maintain a small index; delete expired records
                     idx = await self.get_kv_data(f"{gid}:draw_msg_index", [])
