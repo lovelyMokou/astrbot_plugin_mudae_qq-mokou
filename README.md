@@ -70,6 +70,7 @@ NapCat和AstrBot的部署请参考 [https://docs.astrbot.app/deploy/platform/aio
 @机器人 系统设置 抽卡冷却 <秒数>
 @机器人 系统设置 抽卡次数 <次数>
 @机器人 系统设置 后宫上限 <数量>
+@机器人 系统设置 抽卡范围 <范围>
 ```
 后宫上限同时也是愿望单上限。
 
