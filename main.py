@@ -271,7 +271,7 @@ class CCB_Plugin(Star):
     @filter.command("我的后宫")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_harem(self, event: AstrMessageEvent, page: int = 0):
-        '''显示收集的人物列表（图片形式）'''
+        '''显示收集的人物列表（合并转发形式，每个角色显示名字+图片）'''
         event.call_llm = True
         gid = event.get_group_id() or "global"
         uid = str(event.get_sender_id())
@@ -287,12 +287,15 @@ class CCB_Plugin(Star):
             ])
             return
         
-        # 获取角色信息
+        # 获取角色信息（注意：marry_list里存的是字符串ID）
         characters = []
         for cid in marry_list:
             char = self.char_manager.get_character_by_id(cid)
             if char:
                 characters.append(char)
+            else:
+                # 如果找不到角色，记录日志
+                logger.warning(f"后宫角色未找到: cid={cid}, type={type(cid)}")
         
         if not characters:
             yield event.chain_result([
@@ -302,29 +305,39 @@ class CCB_Plugin(Star):
             ])
             return
         
-        # 发送标题
-        yield event.chain_result([
-            Comp.Plain(f"🎀 {nick}的后宫 🎀\n共{len(characters)}位角色")
-        ])
+        # 构建合并转发消息
+        node_list = []
         
-        # 逐个发送角色（名字+图片）
+        # 标题节点
+        node_list.append(
+            Comp.Node(
+                uin=event.get_self_id(),
+                name=f"{nick}的后宫",
+                content=[Comp.Plain(f"🎀 {nick}的后宫 🎀\n共{len(characters)}位角色")]
+            )
+        )
+        
+        # 每个角色一个节点（文字+图片）
         for char in characters:
             name = char.get("name", "未知角色")
             source = char.get("source", "未知作品")
             image_url = char.get("image_url")
             
-            # 构建消息：名字+来源+图片
-            text = f"《{source}》的{name}"
-            cq_message = [{"type": "text", "data": {"text": text}}]
+            # 构建节点内容
+            content = [Comp.Plain(f"《{source}》的{name}")]
             if image_url:
-                cq_message.append({"type": "image", "data": {"file": image_url}})
+                content.append(Comp.Image.fromURL(image_url))
             
-            try:
-                await event.bot.api.call_action("send_group_msg", 
-                    group_id=event.get_group_id(), 
-                    message=cq_message)
-            except Exception as e:
-                logger.error({"stage": "harem_send_error", "error": repr(e)})
+            node_list.append(
+                Comp.Node(
+                    uin=event.get_self_id(),
+                    name=f"{nick}的后宫",
+                    content=content
+                )
+            )
+        
+        # 发送合并转发消息
+        yield event.chain_result([Comp.Nodes(node_list)])
 
     @filter.command("离婚")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
