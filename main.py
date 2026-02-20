@@ -174,7 +174,14 @@ class CCB_Plugin(Star):
         cooldown = max(cooldown, 2)
         if cooldown > 0:
             last_draw_ts = await self.get_kv_data(f"{gid}:last_draw", 0)
-            if (now_ts - last_draw_ts) < cooldown:
+            elapsed = now_ts - last_draw_ts
+            if elapsed < cooldown:
+                # 冷却中，提示用户还需等待多久
+                wait_sec = int(cooldown - elapsed)
+                yield event.chain_result([
+                    Comp.At(qq=user_id),
+                    Comp.Plain(f" 抽卡冷却中，还需等待 {wait_sec} 秒")
+                ])
                 return
 
         if record_bucket != bucket:
