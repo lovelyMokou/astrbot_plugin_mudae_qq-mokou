@@ -171,18 +171,7 @@ class CCB_Plugin(Star):
         record_bucket, record_count = await self.get_kv_data(key, (None, 0))
         cooldown = config.get("draw_cooldown", 0)
 
-        cooldown = max(cooldown, 2)
-        if cooldown > 0:
-            last_draw_ts = await self.get_kv_data(f"{gid}:last_draw", 0)
-            elapsed = now_ts - last_draw_ts
-            if elapsed < cooldown:
-                # 冷却中，提示用户还需等待多久
-                wait_sec = int(cooldown - elapsed)
-                yield event.chain_result([
-                    Comp.At(qq=user_id),
-                    Comp.Plain(f" 抽卡冷却中，还需等待 {wait_sec} 秒")
-                ])
-                return
+        # 注：已移除抽卡冷却，只保留每小时次数限制
 
         if record_bucket != bucket:
             count = 0
@@ -245,7 +234,6 @@ class CCB_Plugin(Star):
             # 使用NapCat的API发送消息
             resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
             await self.put_kv_data(key, (bucket, next_count))
-            await self.put_kv_data(f"{gid}:last_draw", now_ts)
             
             # 如果角色未被结婚，直接让用户获得该角色（不加锁，提高并发性能）
             if not married_to:
