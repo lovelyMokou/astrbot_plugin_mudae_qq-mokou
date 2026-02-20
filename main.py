@@ -25,10 +25,10 @@ class CCB_Plugin(Star):
         self.group_locks = {}
 
     async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
-        chars = self.char_manager.load_characters()
+        """异步初始化插件，加载角色数据"""
+        chars = await self.char_manager.load_characters_async()
         if not chars:
-            raise RuntimeError("无法加载角色数据：characters.json 缺失或格式错误")
+            logger.warning("角色数据加载失败，将在首次抽卡时重试")
 
     async def get_group_cfg(self, gid):
         if gid not in self.group_cfgs:
@@ -203,39 +203,38 @@ class CCB_Plugin(Star):
             return
             
         name = character.get("name", "未知角色")
-        images = character.get("image") or []
-        image_url = random.choice(images) if images else None
+        source = character.get("source", "未知作品")  # 作品名
+        image_url = character.get("image_url")  # animewifex 图床图片
         char_id = character.get("id")
         
         # 检查角色是否已被结婚
         married_to = await self.get_kv_data(f"{gid}:{char_id}:married_to", None)
-        wished_by_key = f"{gid}:{char_id}:wished_by"
-        wished_by = await self.get_kv_data(wished_by_key, [])
         
-        # 构建消息
-        cq_message = []
-        if not married_to and wished_by:
-            for wisher in wished_by:
-                cq_message.append({"type": "at", "data": {"qq": wisher}})
-            cq_message.append({"type": "text", "data": {"text": f" 已许愿\n{name}"}})
-        else:
-            cq_message.append({"type": "text", "data": {"text": f"{name}"}})
-        if married_to:
-            cq_message.append({"type": "text", "data": {"text": "\u200b\n❤已与"}})
-            cq_message.append({"type": "at", "data": {"qq": married_to}})
-            cq_message.append({"type": "text", "data": {"text": "结婚，勿扰❤"}})
-        if image_url:
-            cq_message.append({"type": "image", "data": {"file": image_url}})
+        # 获取用户昵称
+        nick = event.get_sender_name() or str(user_id)
         
-        if remaining <= 0:
-            cq_message.append({"type": "text", "data": {"text": "⚠本小时已达上限⚠"}})
-
         try:
+            # 构建消息 - 使用 animewifex 格式
+            # 先发送角色图片和来源信息
+            if not married_to:
+                # 未结婚：显示获得消息
+                text = f"{nick}，你抽到了来自《{source}》的{name}，请好好珍惜哦~"
+            else:
+                # 已结婚：显示已被占用
+                text = f"{name} - 来自《{source}》\n❤已与{married_to}结婚，勿扰❤"
+            
+            cq_message = [{"type": "text", "data": {"text": text}}]
+            if image_url:
+                cq_message.append({"type": "image", "data": {"file": image_url}})
+            
+            if remaining <= 0:
+                cq_message.append({"type": "text", "data": {"text": "⚠本小时已达上限⚠"}})
+            
             # 使用NapCat的API发送消息
             resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
             await self.put_kv_data(key, (bucket, next_count))
             
-            # 如果角色未被结婚，直接让用户获得该角色（不加锁，提高并发性能）
+            # 如果角色未被结婚，直接让用户获得该角色
             if not married_to:
                 marry_list_key = f"{gid}:{user_id}:partners"
                 marry_list = await self.get_kv_data(marry_list_key, [])
@@ -247,20 +246,6 @@ class CCB_Plugin(Star):
                         marry_list.append(str(char_id))
                     await self.put_kv_data(marry_list_key, marry_list)
                     await self.put_kv_data(f"{gid}:{char_id}:married_to", user_id)
-                    
-                    # 发送获得消息
-                    gender = character.get("gender")
-                    if gender == "女":
-                        title = "老婆"
-                    elif gender == "男":
-                        title = "老公"
-                    else:
-                        title = ""
-                    yield event.chain_result([
-                        Comp.Plain(f"🎉 {name} 是 "),
-                        Comp.At(qq=user_id),
-                        Comp.Plain(f" 的{title}了！🎉")
-                    ])
                 else:
                     # 后宫已满的提示
                     yield event.chain_result([
