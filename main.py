@@ -1,4 +1,4 @@
-from astrbot.api.event import filter, AstrMessageEvent
+﻿from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.core.star.filter.platform_adapter_type import PlatformAdapterType
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
@@ -89,6 +89,9 @@ class CCB_Plugin(Star):
     async def handle_emoji_like_notice(self, event: AstrMessageEvent):
         '''用户回应抽卡结果和交换请求的处理器'''
         emoji_user = event.get_sender_id()
+        # 忽略机器人自己的贴表情操作
+        if str(emoji_user) == str(event.get_self_id()):
+            return
         msg_id = event.message_obj.raw_message.message_id
         now_ts = time.time()
         gid = event.get_group_id() or "global"
@@ -263,8 +266,6 @@ class CCB_Plugin(Star):
                             "ts": now_ts,
                         },
                     )
-                    # 使用NapCat的API贴一个爱心表情
-                    await event.bot.api.call_action("set_msg_emoji_like", message_id=msg_id, emoji_id=66, set=True)
             except Exception as e:
                 logger.error({"stage": "draw_send_error_bot", "error": repr(e)})
 
