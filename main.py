@@ -217,11 +217,11 @@ class CCB_Plugin(Star):
             # 构建消息 - 使用 animewifex 格式
             # 先发送角色图片和来源信息
             if not married_to:
-                # 未结婚：显示获得消息
-                text = f"{nick}，你抽到了来自《{source}》的{name}，请好好珍惜哦~"
+                # 未结婚：显示获得消息（包含ID）
+                text = f"{nick}，你抽到了来自《{source}》的{name}[id:{char_id}]，请好好珍惜哦~"
             else:
-                # 已结婚：显示已被占用
-                text = f"{name} - 来自《{source}》\n❤已与{married_to}结婚，勿扰❤"
+                # 已结婚：显示已被占用（包含ID）
+                text = f"{name}[id:{char_id}] - 来自《{source}》\n❤已与{married_to}结婚，勿扰❤"
             
             cq_message = [{"type": "text", "data": {"text": text}}]
             if image_url:
@@ -321,10 +321,11 @@ class CCB_Plugin(Star):
         for char in characters:
             name = char.get("name", "未知角色")
             source = char.get("source", "未知作品")
+            char_id = char.get("id", "?")
             image_url = char.get("image_url")
             
-            # 构建节点内容
-            content = [Comp.Plain(f"《{source}》的{name}")]
+            # 构建节点内容（包含ID）
+            content = [Comp.Plain(f"《{source}》的{name}[id:{char_id}]")]
             if image_url:
                 content.append(Comp.Image.fromURL(image_url))
             
