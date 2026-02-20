@@ -238,69 +238,37 @@ class CCB_Plugin(Star):
                 await self.put_kv_data(key, (bucket, next_count))
                 await self.put_kv_data(f"{gid}:last_draw", now_ts)
                 
-                # 如果角色未被结婚，直接让用户获得该角色
+                # 如果角色未被结婚，直接让用户获得该角色（在同一锁内执行）
                 if not married_to:
-                    async for res in self.auto_claim(event, user_id, char_id, msg_id):
-                        yield res
+                    # 检查结婚冷却
+                    claim_cooldown = config.get("claim_cooldown", self.claim_cooldown_default)
+                    last_claim_ts = await self.get_kv_data(f"{gid}:{user_id}:last_claim", 0)
+                    if (now_ts - last_claim_ts) >= claim_cooldown:
+                        # 检查后宫是否已满
+                        marry_list_key = f"{gid}:{user_id}:partners"
+                        marry_list = await self.get_kv_data(marry_list_key, [])
+                        if len(marry_list) < config.get("harem_max_size", self.harem_max_size_default):
+                            # 添加到后宫
+                            if str(char_id) not in marry_list:
+                                marry_list.append(str(char_id))
+                            await self.put_kv_data(marry_list_key, marry_list)
+                            await self.put_kv_data(f"{gid}:{char_id}:married_to", user_id)
+                            await self.put_kv_data(f"{gid}:{user_id}:last_claim", now_ts)
+                            # 发送获得消息
+                            gender = character.get("gender")
+                            if gender == "女":
+                                title = "老婆"
+                            elif gender == "男":
+                                title = "老公"
+                            else:
+                                title = ""
+                            yield event.chain_result([
+                                Comp.Plain(f"🎉 {name} 是 "),
+                                Comp.At(qq=user_id),
+                                Comp.Plain(f" 的{title}了！🎉")
+                            ])
             except Exception as e:
                 logger.error({"stage": "draw_send_error_bot", "error": repr(e)})
-
-    async def auto_claim(self, event: AstrMessageEvent, user_id, char_id, msg_id=None):
-        '''自动获得角色（抽卡后直接获得）'''
-        event.call_llm = True
-        gid = event.get_group_id() or "global"
-        config = await self.get_group_cfg(gid)
-        cooldown = config.get("claim_cooldown", self.claim_cooldown_default)
-        now_ts = time.time()
-        lock = self._get_group_lock(gid)
-        async with lock:
-            claimed_by = await self.get_kv_data(f"{gid}:{char_id}:married_to", None)
-            if claimed_by:
-                return
-            last_claim_ts = await self.get_kv_data(f"{gid}:{user_id}:last_claim", 0)
-            if (now_ts - last_claim_ts) < cooldown:
-                wait_sec = int(cooldown - (now_ts - last_claim_ts))
-                wait_min = max(1, (wait_sec + 59) // 60)
-                yield event.chain_result([
-                    Comp.At(qq=str(user_id)),
-                    Comp.Plain(f"结婚冷却中，剩余{wait_min}分钟。")
-                ])
-                return
-            
-            char = self.char_manager.get_character_by_id(char_id)
-            if not char:
-                return
-            
-            # Track per-user marriage list
-            marry_list_key = f"{gid}:{user_id}:partners"
-            marry_list = await self.get_kv_data(marry_list_key, [])
-            if len(marry_list) >= config.get("harem_max_size", self.harem_max_size_default):
-                yield event.chain_result([
-                    Comp.At(qq=user_id),
-                    Comp.Plain(f" 你的后宫已满{config.get('harem_max_size', self.harem_max_size_default)}，无法再结婚。")
-                ])
-                return
-            if str(char_id) not in marry_list:
-                marry_list.append(str(char_id))
-            await self.put_kv_data(marry_list_key, marry_list)
-            await self.put_kv_data(f"{gid}:{char_id}:married_to", user_id)
-            await self.put_kv_data(f"{gid}:{user_id}:last_claim", now_ts)
-            gender = char.get("gender")
-            if gender == "女":
-                title = "老婆"
-            elif gender == "男":
-                title = "老公"
-            else:
-                title = ""
-            
-            result_chain = [
-                Comp.Plain(f"🎉 {char.get('name')} 是 "),
-                Comp.At(qq=user_id),
-                Comp.Plain(f" 的{title}了！🎉")
-            ]
-            if msg_id:
-                result_chain.insert(0, Comp.Reply(id=msg_id))
-            yield event.chain_result(result_chain)
 
     async def handle_claim(self, event: AstrMessageEvent):
         '''结婚逻辑（保留用于兼容，但抽卡已自动获得）'''
