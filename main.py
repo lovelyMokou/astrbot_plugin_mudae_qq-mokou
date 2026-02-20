@@ -271,7 +271,7 @@ class CCB_Plugin(Star):
     @filter.command("我的后宫")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_harem(self, event: AstrMessageEvent, page: int = 0):
-        '''显示收集的人物列表（合并转发形式，每个角色显示名字+图片）'''
+        '''显示收集的人物列表（文字形式，带ID）'''
         event.call_llm = True
         gid = event.get_group_id() or "global"
         uid = str(event.get_sender_id())
@@ -287,15 +287,12 @@ class CCB_Plugin(Star):
             ])
             return
         
-        # 获取角色信息（注意：marry_list里存的是字符串ID）
+        # 获取角色信息
         characters = []
         for cid in marry_list:
             char = self.char_manager.get_character_by_id(cid)
             if char:
                 characters.append(char)
-            else:
-                # 如果找不到角色，记录日志
-                logger.warning(f"后宫角色未找到: cid={cid}, type={type(cid)}")
         
         if not characters:
             yield event.chain_result([
@@ -305,39 +302,24 @@ class CCB_Plugin(Star):
             ])
             return
         
-        # 构建合并转发消息
-        node_list = []
+        # 构建文字列表
+        lines = [f"🎀 {nick}的后宫 🎀", f"共{len(characters)}位角色", ""]
         
-        # 标题节点
-        node_list.append(
-            Comp.Node(
-                uin=event.get_self_id(),
-                name=f"{nick}的后宫",
-                content=[Comp.Plain(f"🎀 {nick}的后宫 🎀\n共{len(characters)}位角色")]
-            )
-        )
-        
-        # 每个角色一个节点（文字+图片）
         for char in characters:
             name = char.get("name", "未知角色")
             source = char.get("source", "未知作品")
             char_id = char.get("id", "?")
-            image_url = char.get("image_url")
-            
-            # 构建节点内容（包含ID）
-            content = [Comp.Plain(f"《{source}》的{name}[id:{char_id}]")]
-            if image_url:
-                content.append(Comp.Image.fromURL(image_url))
-            
-            node_list.append(
-                Comp.Node(
-                    uin=event.get_self_id(),
-                    name=f"{nick}的后宫",
-                    content=content
-                )
-            )
+            lines.append(f"《{source}》的{name}[id:{char_id}]")
         
-        # 发送合并转发消息
+        # 发送合并转发消息（纯文字）
+        node_list = [
+            Comp.Node(
+                uin=event.get_self_id(),
+                name=f"{nick}的后宫",
+                content=[Comp.Plain("\n".join(lines))]
+            )
+        ]
+        
         yield event.chain_result([Comp.Nodes(node_list)])
 
     @filter.command("离婚")
