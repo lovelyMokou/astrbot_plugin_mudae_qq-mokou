@@ -156,7 +156,7 @@ class CCB_Plugin(Star):
     @filter.platform_adapter_type(PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_draw(self, event: AstrMessageEvent):
-        '''抽卡！给结果贴表情来收集'''
+        '''抽卡！直接获得角色'''
         event.call_llm = True
         user_id = event.get_sender_id()
         gid = event.get_group_id() or "global"
@@ -228,67 +228,32 @@ class CCB_Plugin(Star):
             if image_url:
                 cq_message.append({"type": "image", "data": {"file": image_url}})
             
-            if remaining == limit-1 and not married_to:
-                cq_message.append({"type": "text", "data": {"text": "💡回复任意表情和TA结婚"}})
             if remaining <= 0:
                 cq_message.append({"type": "text", "data": {"text": "⚠本小时已达上限⚠"}})
 
             try:
-                # 使用NapCat的API获取消息ID
+                # 使用NapCat的API发送消息
                 resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
                 msg_id = resp.get("message_id") if isinstance(resp, dict) else None
                 await self.put_kv_data(key, (bucket, next_count))
                 await self.put_kv_data(f"{gid}:last_draw", now_ts)
-                if msg_id is not None and not married_to:
-                    # Maintain a small index; delete expired records
-                    idx = await self.get_kv_data(f"{gid}:draw_msg_index", [])
-                    cutoff = now_ts - DRAW_MSG_TTL
-                    new_idx = []
-                    if isinstance(idx, list):
-                        for item in idx:
-                            if not isinstance(item, dict):
-                                continue
-                            ts_old = item.get("ts", 0)
-                            mid_old = item.get("id")
-                            if ts_old and ts_old < cutoff and mid_old:
-                                await self.delete_kv_data(f"{gid}:draw_msg:{mid_old}")
-                                continue
-                            new_idx.append(item)
-                        idx = new_idx[-(DRAW_MSG_INDEX_MAX - 1) :] if len(new_idx) >= DRAW_MSG_INDEX_MAX else new_idx
-                    else:
-                        idx = []
-                    idx.append({"id": msg_id, "ts": now_ts})
-                    await self.put_kv_data(f"{gid}:draw_msg_index", idx)
-                    await self.put_kv_data(
-                        f"{gid}:draw_msg:{msg_id}",
-                        {
-                            "char_id": str(char_id),
-                            "ts": now_ts,
-                        },
-                    )
+                
+                # 如果角色未被结婚，直接让用户获得该角色
+                if not married_to:
+                    async for res in self.auto_claim(event, user_id, char_id, msg_id):
+                        yield res
             except Exception as e:
                 logger.error({"stage": "draw_send_error_bot", "error": repr(e)})
 
-    async def handle_claim(self, event: AstrMessageEvent):
-        '''结婚逻辑，给结果贴表情来收集。'''
+    async def auto_claim(self, event: AstrMessageEvent, user_id, char_id, msg_id=None):
+        '''自动获得角色（抽卡后直接获得）'''
         event.call_llm = True
         gid = event.get_group_id() or "global"
-        user_id = event.get_sender_id()
-        msg_id = event.message_obj.raw_message.message_id
-        # per-user cooldown
         config = await self.get_group_cfg(gid)
         cooldown = config.get("claim_cooldown", self.claim_cooldown_default)
         now_ts = time.time()
         lock = self._get_group_lock(gid)
         async with lock:
-            draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
-            await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
-            if not draw_msg:
-                return
-            ts = draw_msg.get("ts", 0)
-            if ts and (now_ts - ts > DRAW_MSG_TTL):
-                return
-            char_id = draw_msg.get("char_id")
             claimed_by = await self.get_kv_data(f"{gid}:{char_id}:married_to", None)
             if claimed_by:
                 return
@@ -300,10 +265,8 @@ class CCB_Plugin(Star):
                     Comp.At(qq=str(user_id)),
                     Comp.Plain(f"结婚冷却中，剩余{wait_min}分钟。")
                 ])
-                await self.put_kv_data(f"{gid}:draw_msg:{msg_id}", draw_msg)
                 return
             
-            char_id = draw_msg.get("char_id")
             char = self.char_manager.get_character_by_id(char_id)
             if not char:
                 return
@@ -316,7 +279,6 @@ class CCB_Plugin(Star):
                     Comp.At(qq=user_id),
                     Comp.Plain(f" 你的后宫已满{config.get('harem_max_size', self.harem_max_size_default)}，无法再结婚。")
                 ])
-                await self.put_kv_data(f"{gid}:draw_msg:{msg_id}", draw_msg)
                 return
             if str(char_id) not in marry_list:
                 marry_list.append(str(char_id))
@@ -330,12 +292,28 @@ class CCB_Plugin(Star):
                 title = "老公"
             else:
                 title = ""
-            yield event.chain_result([
-                Comp.Reply(id=msg_id),
+            
+            result_chain = [
                 Comp.Plain(f"🎉 {char.get('name')} 是 "),
                 Comp.At(qq=user_id),
                 Comp.Plain(f" 的{title}了！🎉")
-            ])
+            ]
+            if msg_id:
+                result_chain.insert(0, Comp.Reply(id=msg_id))
+            yield event.chain_result(result_chain)
+
+    async def handle_claim(self, event: AstrMessageEvent):
+        '''结婚逻辑（保留用于兼容，但抽卡已自动获得）'''
+        event.call_llm = True
+        gid = event.get_group_id() or "global"
+        user_id = event.get_sender_id()
+        msg_id = event.message_obj.raw_message.message_id
+        draw_msg = await self.get_kv_data(f"{gid}:draw_msg:{msg_id}", None)
+        if draw_msg:
+            char_id = draw_msg.get("char_id")
+            await self.delete_kv_data(f"{gid}:draw_msg:{msg_id}")
+            async for res in self.auto_claim(event, user_id, char_id, msg_id):
+                yield res
 
     @filter.command("我的后宫")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
