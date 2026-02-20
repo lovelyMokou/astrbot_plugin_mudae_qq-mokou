@@ -160,115 +160,120 @@ class CCB_Plugin(Star):
         event.call_llm = True
         user_id = event.get_sender_id()
         gid = event.get_group_id() or "global"
-        lock = self._get_group_lock(gid)
-        async with lock:
-            key = f"{gid}:{user_id}:draw_status"
-            now_ts = time.time()
-            config = await self.get_group_cfg(gid)
-            limit = config.get("draw_hourly_limit", self.draw_hourly_limit_default)
-            now_tm = time.localtime(now_ts)
-            bucket = f"{now_tm.tm_year}-{now_tm.tm_yday}-{now_tm.tm_hour}"
-            record_bucket, record_count = await self.get_kv_data(key, (None, 0))
-            cooldown = config.get("draw_cooldown", 0)
+        
+        # 先获取配置和检查限制（不加锁，提高响应速度）
+        key = f"{gid}:{user_id}:draw_status"
+        now_ts = time.time()
+        config = await self.get_group_cfg(gid)
+        limit = config.get("draw_hourly_limit", self.draw_hourly_limit_default)
+        now_tm = time.localtime(now_ts)
+        bucket = f"{now_tm.tm_year}-{now_tm.tm_yday}-{now_tm.tm_hour}"
+        record_bucket, record_count = await self.get_kv_data(key, (None, 0))
+        cooldown = config.get("draw_cooldown", 0)
 
-            cooldown = max(cooldown, 2)
-            if cooldown > 0:
-                last_draw_ts = await self.get_kv_data(f"{gid}:last_draw", 0)
-                if (now_ts - last_draw_ts) < cooldown:
-                    return
-
-            if record_bucket != bucket:
-                count = 0
-            else:
-                count = record_count
-                if count >= limit:
-                    if count == limit:
-                        chain = [
-                            Comp.At(qq=user_id),
-                            Comp.Plain("\u200b\n⚠本小时已达上限⚠")
-                        ]
-                        yield event.chain_result(chain)
-                        await self.put_kv_data(key, (bucket, count + 1))
-                    return
-
-            next_count = count + 1
-            remaining = limit - next_count
-            wish_list = await self.get_kv_data(f"{gid}:{user_id}:wish_list", [])
-            if random.random() < 0.001 and wish_list:
-                char_id = random.choice(wish_list)
-                character = self.char_manager.get_character_by_id(char_id)
-            else:
-                character = self.char_manager.get_random_character(limit=config.get('draw_scope', None))
-            if not character:
-                yield event.plain_result("卡池数据未加载")
+        cooldown = max(cooldown, 2)
+        if cooldown > 0:
+            last_draw_ts = await self.get_kv_data(f"{gid}:last_draw", 0)
+            if (now_ts - last_draw_ts) < cooldown:
                 return
-            name = character.get("name", "未知角色")
-            images = character.get("image") or []
-            image_url = random.choice(images) if images else None
-            char_id = character.get("id")
-            married_to = None
-            if char_id is not None:
-                claimed_by = await self.get_kv_data(f"{gid}:{char_id}:married_to", None)
-                if claimed_by:
-                    married_to = claimed_by
-            wished_by_key = f"{gid}:{char_id}:wished_by"
-            wished_by = await self.get_kv_data(wished_by_key, [])
-            
-            cq_message = []
-            if not married_to and wished_by:
-                for wisher in wished_by:
-                    cq_message.append({"type": "at", "data": {"qq": wisher}})
-                cq_message.append({"type": "text", "data": {"text": f" 已许愿\n{name}"}})
-            else:
-                cq_message.append({"type": "text", "data": {"text": f"{name}"}})
-            if married_to:
-                cq_message.append({"type": "text", "data": {"text": "\u200b\n❤已与"}})
-                cq_message.append({"type": "at", "data": {"qq": married_to}})
-                cq_message.append({"type": "text", "data": {"text": "结婚，勿扰❤"}})
-            if image_url:
-                cq_message.append({"type": "image", "data": {"file": image_url}})
-            
-            if remaining <= 0:
-                cq_message.append({"type": "text", "data": {"text": "⚠本小时已达上限⚠"}})
 
-            try:
-                # 使用NapCat的API发送消息
-                resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
-                msg_id = resp.get("message_id") if isinstance(resp, dict) else None
-                await self.put_kv_data(key, (bucket, next_count))
-                await self.put_kv_data(f"{gid}:last_draw", now_ts)
+        if record_bucket != bucket:
+            count = 0
+        else:
+            count = record_count
+            if count >= limit:
+                if count == limit:
+                    chain = [
+                        Comp.At(qq=user_id),
+                        Comp.Plain("\u200b\n⚠本小时已达上限⚠")
+                    ]
+                    yield event.chain_result(chain)
+                    await self.put_kv_data(key, (bucket, count + 1))
+                return
+
+        next_count = count + 1
+        remaining = limit - next_count
+        
+        # 随机选择角色
+        wish_list = await self.get_kv_data(f"{gid}:{user_id}:wish_list", [])
+        if random.random() < 0.001 and wish_list:
+            char_id = random.choice(wish_list)
+            character = self.char_manager.get_character_by_id(char_id)
+        else:
+            character = self.char_manager.get_random_character(limit=config.get('draw_scope', None))
+        
+        if not character:
+            yield event.plain_result("卡池数据未加载")
+            return
+            
+        name = character.get("name", "未知角色")
+        images = character.get("image") or []
+        image_url = random.choice(images) if images else None
+        char_id = character.get("id")
+        
+        # 检查角色是否已被结婚
+        married_to = await self.get_kv_data(f"{gid}:{char_id}:married_to", None)
+        wished_by_key = f"{gid}:{char_id}:wished_by"
+        wished_by = await self.get_kv_data(wished_by_key, [])
+        
+        # 构建消息
+        cq_message = []
+        if not married_to and wished_by:
+            for wisher in wished_by:
+                cq_message.append({"type": "at", "data": {"qq": wisher}})
+            cq_message.append({"type": "text", "data": {"text": f" 已许愿\n{name}"}})
+        else:
+            cq_message.append({"type": "text", "data": {"text": f"{name}"}})
+        if married_to:
+            cq_message.append({"type": "text", "data": {"text": "\u200b\n❤已与"}})
+            cq_message.append({"type": "at", "data": {"qq": married_to}})
+            cq_message.append({"type": "text", "data": {"text": "结婚，勿扰❤"}})
+        if image_url:
+            cq_message.append({"type": "image", "data": {"file": image_url}})
+        
+        if remaining <= 0:
+            cq_message.append({"type": "text", "data": {"text": "⚠本小时已达上限⚠"}})
+
+        try:
+            # 使用NapCat的API发送消息
+            resp = await event.bot.api.call_action("send_group_msg", group_id=event.get_group_id(), message=cq_message)
+            await self.put_kv_data(key, (bucket, next_count))
+            await self.put_kv_data(f"{gid}:last_draw", now_ts)
+            
+            # 如果角色未被结婚，直接让用户获得该角色（不加锁，提高并发性能）
+            if not married_to:
+                marry_list_key = f"{gid}:{user_id}:partners"
+                marry_list = await self.get_kv_data(marry_list_key, [])
+                harem_max = config.get("harem_max_size", self.harem_max_size_default)
                 
-                # 如果角色未被结婚，直接让用户获得该角色（在同一锁内执行）
-                if not married_to:
-                    # 检查结婚冷却
-                    claim_cooldown = config.get("claim_cooldown", self.claim_cooldown_default)
-                    last_claim_ts = await self.get_kv_data(f"{gid}:{user_id}:last_claim", 0)
-                    if (now_ts - last_claim_ts) >= claim_cooldown:
-                        # 检查后宫是否已满
-                        marry_list_key = f"{gid}:{user_id}:partners"
-                        marry_list = await self.get_kv_data(marry_list_key, [])
-                        if len(marry_list) < config.get("harem_max_size", self.harem_max_size_default):
-                            # 添加到后宫
-                            if str(char_id) not in marry_list:
-                                marry_list.append(str(char_id))
-                            await self.put_kv_data(marry_list_key, marry_list)
-                            await self.put_kv_data(f"{gid}:{char_id}:married_to", user_id)
-                            await self.put_kv_data(f"{gid}:{user_id}:last_claim", now_ts)
-                            # 发送获得消息
-                            gender = character.get("gender")
-                            if gender == "女":
-                                title = "老婆"
-                            elif gender == "男":
-                                title = "老公"
-                            else:
-                                title = ""
-                            yield event.chain_result([
-                                Comp.Plain(f"🎉 {name} 是 "),
-                                Comp.At(qq=user_id),
-                                Comp.Plain(f" 的{title}了！🎉")
-                            ])
-            except Exception as e:
-                logger.error({"stage": "draw_send_error_bot", "error": repr(e)})
+                if len(marry_list) < harem_max:
+                    # 添加到后宫
+                    if str(char_id) not in marry_list:
+                        marry_list.append(str(char_id))
+                    await self.put_kv_data(marry_list_key, marry_list)
+                    await self.put_kv_data(f"{gid}:{char_id}:married_to", user_id)
+                    
+                    # 发送获得消息
+                    gender = character.get("gender")
+                    if gender == "女":
+                        title = "老婆"
+                    elif gender == "男":
+                        title = "老公"
+                    else:
+                        title = ""
+                    yield event.chain_result([
+                        Comp.Plain(f"🎉 {name} 是 "),
+                        Comp.At(qq=user_id),
+                        Comp.Plain(f" 的{title}了！🎉")
+                    ])
+                else:
+                    # 后宫已满的提示
+                    yield event.chain_result([
+                        Comp.At(qq=user_id),
+                        Comp.Plain(f" 你的后宫已满{harem_max}，无法再获得新角色。")
+                    ])
+        except Exception as e:
+            logger.error({"stage": "draw_send_error_bot", "error": repr(e)})
 
     async def handle_claim(self, event: AstrMessageEvent):
         '''结婚逻辑（保留用于兼容，但抽卡已自动获得）'''
