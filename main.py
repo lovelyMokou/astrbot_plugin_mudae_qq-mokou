@@ -271,12 +271,14 @@ class CCB_Plugin(Star):
     @filter.command("我的后宫")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def handle_harem(self, event: AstrMessageEvent, page: int = 0):
-        '''显示收集的人物列表'''
+        '''显示收集的人物列表（图片形式）'''
         event.call_llm = True
         gid = event.get_group_id() or "global"
         uid = str(event.get_sender_id())
+        nick = event.get_sender_name() or str(uid)
         marry_list_key = f"{gid}:{uid}:partners"
         marry_list = await self.get_kv_data(marry_list_key, [])
+        
         if not marry_list:
             yield event.chain_result([
                 Comp.Reply(id=event.message_obj.message_id),
@@ -284,73 +286,45 @@ class CCB_Plugin(Star):
                 Comp.Plain("，你的后宫空空如也。")
             ])
             return
-        lines = []
-        per_page = 10
-        fav = await self.get_kv_data(f"{gid}:{uid}:fav", None)
-        total_heat = 0
-        entries = []
+        
+        # 获取角色信息
+        characters = []
         for cid in marry_list:
             char = self.char_manager.get_character_by_id(cid)
-            if char is None:
-                continue
-            heat = char.get("heat") or 0
-            total_heat += heat
-            fav_mark = ""
-            if fav and str(fav) == str(cid):
-                fav_mark = "⭐"
-            entries.append(f"{fav_mark}{char.get('name')} (ID: {cid})")
-        if page == 0:
-            sender_name = event.get_sender_name() or event.get_sender_id()
-            header_parts = [
-                Comp.Plain(f"{sender_name}的后宫\n总人气: {total_heat}")
-            ]
-            if fav and str(fav) in marry_list:
-                fav_char = self.char_manager.get_character_by_id(fav)
-                if fav_char:
-                    images = fav_char.get("image") or []
-                    image_url = random.choice(images) if images else None
-                    if image_url:
-                        header_parts.insert(0, Comp.Image.fromURL(image_url))
-            node_list = [
-                Comp.Node(
-                    uin=event.get_self_id(),
-                    name=f"{sender_name}的后宫",
-                    content=header_parts
-                )
-            ]
-            for idx in range(0, len(entries), per_page):
-                chunk = entries[idx:idx + per_page]
-                node_list.append(
-                    Comp.Node(
-                        uin=event.get_self_id(),
-                        name=f"{sender_name}的后宫",
-                        content=[Comp.Plain("\n".join(chunk))]
-                    )
-                )
+            if char:
+                characters.append(char)
+        
+        if not characters:
             yield event.chain_result([
-                Comp.Nodes(node_list)
+                Comp.Reply(id=event.message_obj.message_id),
+                Comp.At(qq=uid),
+                Comp.Plain("，你的后宫数据异常。")
             ])
             return
-        total_pages = max(1, (len(entries) + per_page - 1) // per_page)
-        if page < 1:
-            page = 1
-        if page > total_pages:
-            page = total_pages
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        lines.append(f"阵容总人气: {total_heat}")
-        lines.extend(entries[start_idx:end_idx])
-        lines.append(f"(第{page}/{total_pages}页)")
-        chain = [Comp.Reply(id=event.message_obj.message_id)]
-        if fav and str(fav) in marry_list:
-            fav_char = self.char_manager.get_character_by_id(fav)
-            if fav_char:
-                images = fav_char.get("image") or []
-                image_url = random.choice(images) if images else None
-                if image_url:
-                    chain.append(Comp.Image.fromURL(image_url))
-        chain.append(Comp.Plain("\n".join(lines)))
-        yield event.chain_result(chain)
+        
+        # 发送标题
+        yield event.chain_result([
+            Comp.Plain(f"🎀 {nick}的后宫 🎀\n共{len(characters)}位角色")
+        ])
+        
+        # 逐个发送角色（名字+图片）
+        for char in characters:
+            name = char.get("name", "未知角色")
+            source = char.get("source", "未知作品")
+            image_url = char.get("image_url")
+            
+            # 构建消息：名字+来源+图片
+            text = f"《{source}》的{name}"
+            cq_message = [{"type": "text", "data": {"text": text}}]
+            if image_url:
+                cq_message.append({"type": "image", "data": {"file": image_url}})
+            
+            try:
+                await event.bot.api.call_action("send_group_msg", 
+                    group_id=event.get_group_id(), 
+                    message=cq_message)
+            except Exception as e:
+                logger.error({"stage": "harem_send_error", "error": repr(e)})
 
     @filter.command("离婚")
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
